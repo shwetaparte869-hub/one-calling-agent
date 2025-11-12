@@ -14,6 +14,7 @@ app.use(bodyParser.json());
 const EXOTEL_SUBDOMAIN = process.env.EXOTEL_SUBDOMAIN?.trim();
 const EXOTEL_SID = process.env.EXOTEL_SID?.trim();
 const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN?.trim();
+const EXOTEL_APP_ID = process.env.EXOTEL_APP_ID?.trim() || '1117620'; // App ID (default: 1117620)
 const EXOTEL_FROM = process.env.EXOTEL_FROM?.trim(); // Your Exotel virtual number
 
 // Helper function to format Indian phone numbers
@@ -113,6 +114,11 @@ app.post('/exotel/call', async (req, res) => {
       TimeLimit: req.body.timeLimit || '30', // Optional: max call duration in seconds
       StatusCallback: statusCallbackUrl, // Webhook URL for call status updates
     });
+    
+    // Add App ID if provided (optional, some Exotel accounts require it)
+    if (EXOTEL_APP_ID || req.body.appId) {
+      requestData.append('AppId', EXOTEL_APP_ID || req.body.appId);
+    }
 
     // Make API call to Exotel with Basic Auth
     // Ensure no extra whitespace in credentials
