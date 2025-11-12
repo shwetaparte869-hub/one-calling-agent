@@ -3,6 +3,9 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const axios = require('axios');
+const http = require('http');
+const WebSocket = require('ws');
+const url = require('url');
 
 dotenv.config();
 const app = express();
@@ -16,6 +19,7 @@ const EXOTEL_SID = process.env.EXOTEL_SID?.trim();
 const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN?.trim();
 const EXOTEL_APP_ID = process.env.EXOTEL_APP_ID?.trim() || '1117620'; // App ID (default: 1117620)
 const EXOTEL_FROM = process.env.EXOTEL_FROM?.trim() || '07948516111'; // Exotel virtual number (default: 07948516111)
+const EXOTEL_WS_TOKEN = process.env.EXOTEL_WS_TOKEN?.trim(); // Optional: WebSocket authentication token
 
 // Helper function to format Indian phone numbers
 function formatPhoneNumber(number) {
@@ -205,15 +209,222 @@ app.post('/exotel/incoming', async (req, res) => {
 
 // Health check endpoint
 app.get('/', (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
   res.json({ 
     status: 'Server is running',
     endpoints: {
       makeCall: 'POST /exotel/call',
-      webhook: 'POST /exotel/incoming'
+      webhook: 'POST /exotel/incoming',
+      voiceStream: `WSS ${baseUrl}/voice-stream`
     },
-    webhookUrl: `${req.protocol}://${req.get('host')}/exotel/incoming`
+    webhookUrl: `${baseUrl}/exotel/incoming`,
+    websocketUrl: `wss://${req.get('host')}/voice-stream`
   });
 });
 
+// Create HTTP server from Express app
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const server = http.createServer(app);
+
+// WebSocket server for Exotel voice streaming
+const wss = new WebSocket.Server({ 
+  server,
+  path: '/voice-stream',
+  verifyClient: (info) => {
+    // Verify authentication token if configured
+    if (EXOTEL_WS_TOKEN) {
+      const authHeader = info.req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        console.log('❌ WebSocket connection rejected: Missing or invalid Authorization header');
+        return false;
+      }
+      const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+      if (token !== EXOTEL_WS_TOKEN) {
+        console.log('❌ WebSocket connection rejected: Invalid token');
+        return false;
+      }
+    }
+    return true;
+  }
+});
+
+// Store active WebSocket sessions
+const activeSessions = new Map();
+
+wss.on('connection', (ws, req) => {
+  // Parse query parameters from URL
+  const parsedUrl = url.parse(req.url, true);
+  const query = parsedUrl.query;
+  const callSid = query.callSid || query.callLogId || 'unknown';
+  
+  console.log(`🔌 WebSocket connection established`);
+  console.log(`   Call SID: ${callSid}`);
+  console.log(`   Query params:`, query);
+  
+  // Create session entry
+  const sessionId = callSid;
+  const session = {
+    callSid: callSid,
+    ws: ws,
+    connectedAt: new Date(),
+    sequenceNumber: 0,
+    streamSid: null
+  };
+  
+  activeSessions.set(sessionId, session);
+  console.log(`✅ Session created: ${sessionId}`);
+  
+  // Handle incoming messages from Exotel
+  ws.on('message', (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+      console.log(`📨 Received message:`, message.event || 'unknown');
+      
+      switch (message.event) {
+        case 'start':
+          handleStartEvent(session, message);
+          break;
+          
+        case 'media':
+          handleMediaEvent(session, message);
+          break;
+          
+        case 'stop':
+          handleStopEvent(session, message);
+          break;
+          
+        default:
+          console.log(`⚠️ Unknown event type: ${message.event}`);
+      }
+    } catch (error) {
+      console.error('❌ Error parsing WebSocket message:', error);
+      console.error('Raw data:', data.toString());
+    }
+  });
+  
+  // Handle connection close
+  ws.on('close', (code, reason) => {
+    console.log(`🔌 WebSocket connection closed`);
+    console.log(`   Call SID: ${callSid}`);
+    console.log(`   Code: ${code}, Reason: ${reason.toString()}`);
+    
+    // Clean up session
+    if (activeSessions.has(sessionId)) {
+      activeSessions.delete(sessionId);
+      console.log(`🗑️ Session removed: ${sessionId}`);
+    }
+  });
+  
+  // Handle errors
+  ws.on('error', (error) => {
+    console.error(`❌ WebSocket error for ${callSid}:`, error);
+  });
+});
+
+// Handle 'start' event
+function handleStartEvent(session, message) {
+  console.log(`🎬 Start event received`);
+  console.log(`   Stream SID: ${message.stream_sid}`);
+  console.log(`   Account SID: ${message.account_sid}`);
+  console.log(`   Call SID: ${message.call_sid}`);
+  
+  session.streamSid = message.stream_sid;
+  session.accountSid = message.account_sid;
+  session.callSid = message.call_sid || session.callSid;
+  
+  // Update session
+  activeSessions.set(session.callSid, session);
+  
+  // You can send a response here if needed
+  // For now, we'll just log it
+}
+
+// Handle 'media' event (incoming audio)
+function handleMediaEvent(session, message) {
+  if (!session.streamSid) {
+    console.log('⚠️ Media event received but stream_sid not set');
+    return;
+  }
+  
+  // Decode base64 audio payload
+  if (message.media && message.media.payload) {
+    try {
+      const audioBuffer = Buffer.from(message.media.payload, 'base64');
+      // Process audio here (save, transcribe, etc.)
+      // For now, we'll just log the size
+      console.log(`🎵 Media received: ${audioBuffer.length} bytes`);
+      
+      // Example: Echo back the audio (you can modify this)
+      // sendMediaToExotel(session, audioBuffer);
+      
+    } catch (error) {
+      console.error('❌ Error decoding media payload:', error);
+    }
+  }
+}
+
+// Handle 'stop' event
+function handleStopEvent(session, message) {
+  console.log(`🛑 Stop event received`);
+  console.log(`   Call SID: ${session.callSid}`);
+  console.log(`   Stream SID: ${session.streamSid}`);
+  
+  // Clean up resources
+  if (activeSessions.has(session.callSid)) {
+    activeSessions.delete(session.callSid);
+    console.log(`🗑️ Session cleaned up: ${session.callSid}`);
+  }
+  
+  // Close WebSocket connection
+  if (session.ws.readyState === WebSocket.OPEN) {
+    session.ws.close();
+  }
+}
+
+// Function to send media back to Exotel
+function sendMediaToExotel(session, audioBuffer) {
+  if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
+    console.log('⚠️ Cannot send media: WebSocket not open');
+    return;
+  }
+  
+  if (!session.streamSid) {
+    console.log('⚠️ Cannot send media: stream_sid not set');
+    return;
+  }
+  
+  // Exotel expects 16-bit, 8 kHz mono PCM
+  // Break into 3200-byte chunks
+  const chunkSize = 3200;
+  
+  for (let i = 0; i < audioBuffer.length; i += chunkSize) {
+    const chunk = audioBuffer.slice(i, i + chunkSize);
+    const base64Chunk = chunk.toString('base64');
+    
+    const mediaMessage = {
+      event: 'media',
+      stream_sid: session.streamSid,
+      sequence_number: session.sequenceNumber.toString(),
+      media: {
+        payload: base64Chunk
+      }
+    };
+    
+    try {
+      session.ws.send(JSON.stringify(mediaMessage));
+      session.sequenceNumber++;
+      console.log(`📤 Sent media chunk: sequence ${session.sequenceNumber - 1}, size ${chunk.length} bytes`);
+    } catch (error) {
+      console.error('❌ Error sending media:', error);
+      break;
+    }
+  }
+}
+
+// Start HTTP server (WebSocket server is attached)
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 WebSocket endpoint: wss://one-calling-agent.onrender.com/voice-stream`);
+  console.log(`🔐 WebSocket auth: ${EXOTEL_WS_TOKEN ? 'Enabled' : 'Disabled'}`);
+  console.log(`📊 Active sessions: ${activeSessions.size}`);
+});
