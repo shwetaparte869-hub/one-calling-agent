@@ -14,9 +14,12 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 // Exotel configuration from environment variables (trim whitespace)
-const EXOTEL_SUBDOMAIN = process.env.EXOTEL_SUBDOMAIN?.trim();
-const EXOTEL_SID = process.env.EXOTEL_SID?.trim();
-const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN?.trim();
+// Note: EXOTEL_SID should be the API KEY (Username) from Exotel dashboard, not Account SID
+// EXOTEL_ACCOUNT_SID is the Account SID (e.g., troikaplus1) used in URL path
+const EXOTEL_SUBDOMAIN = process.env.EXOTEL_SUBDOMAIN?.trim() || 'api'; // Subdomain (e.g., 'api' from 'api.exotel.com')
+const EXOTEL_ACCOUNT_SID = process.env.EXOTEL_ACCOUNT_SID?.trim() || 'troikaplus1'; // Account SID for URL path
+const EXOTEL_SID = process.env.EXOTEL_SID?.trim(); // API KEY (Username) for Basic Auth - REQUIRED
+const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN?.trim(); // API TOKEN (Password) for Basic Auth - REQUIRED
 const EXOTEL_APP_ID = process.env.EXOTEL_APP_ID?.trim() || '1117620'; // App ID (default: 1117620)
 const EXOTEL_FROM = process.env.EXOTEL_FROM?.trim() || '07948516111'; // Exotel virtual number (default: 07948516111)
 const EXOTEL_WS_TOKEN = process.env.EXOTEL_WS_TOKEN?.trim(); // Optional: WebSocket authentication token
@@ -58,16 +61,18 @@ app.post('/exotel/call', async (req, res) => {
     }
 
     // Check if Exotel credentials are configured
-    if (!EXOTEL_SUBDOMAIN || !EXOTEL_SID || !EXOTEL_TOKEN) {
+    // EXOTEL_SID = API KEY (Username) from Exotel dashboard
+    // EXOTEL_TOKEN = API TOKEN (Password) from Exotel dashboard
+    if (!EXOTEL_SID || !EXOTEL_TOKEN) {
       const missing = [];
-      if (!EXOTEL_SUBDOMAIN) missing.push('EXOTEL_SUBDOMAIN');
-      if (!EXOTEL_SID) missing.push('EXOTEL_SID');
-      if (!EXOTEL_TOKEN) missing.push('EXOTEL_TOKEN');
+      if (!EXOTEL_SID) missing.push('EXOTEL_SID (API KEY Username)');
+      if (!EXOTEL_TOKEN) missing.push('EXOTEL_TOKEN (API TOKEN Password)');
       
       return res.status(500).json({ 
         error: 'Exotel credentials not configured',
         missing: missing,
-        message: `Please set the following environment variables in Render: ${missing.join(', ')}`
+        message: `Please set the following environment variables in Render: ${missing.join(', ')}`,
+        help: 'Get these from Exotel Dashboard → API Credentials → Default API key'
       });
     }
     
@@ -116,7 +121,9 @@ app.post('/exotel/call', async (req, res) => {
     }
     
     // Now construct the URL properly
-    const exotelUrl = `https://${subdomain}.exotel.com/v1/Accounts/${EXOTEL_SID}/Calls/connect.json`;
+    // Use Account SID in URL path, API KEY (EXOTEL_SID) for authentication
+    const accountSid = EXOTEL_ACCOUNT_SID || 'troikaplus1';
+    const exotelUrl = `https://${subdomain}.exotel.com/v1/Accounts/${accountSid}/Calls/connect.json`;
 
     // Prepare request data
     const requestData = new URLSearchParams({
@@ -133,19 +140,21 @@ app.post('/exotel/call', async (req, res) => {
     }
 
     // Make API call to Exotel with Basic Auth
+    // Use API KEY (Username) and API TOKEN (Password) for authentication
     // Ensure no extra whitespace in credentials
-    const cleanSid = EXOTEL_SID.trim();
-    const cleanToken = EXOTEL_TOKEN.trim();
-    const auth = Buffer.from(`${cleanSid}:${cleanToken}`).toString('base64');
+    const cleanApiKey = EXOTEL_SID.trim(); // API KEY (Username)
+    const cleanToken = EXOTEL_TOKEN.trim(); // API TOKEN (Password)
+    const auth = Buffer.from(`${cleanApiKey}:${cleanToken}`).toString('base64');
     
     console.log(`📞 Making Exotel call:`);
     console.log(`   From (Exotel): ${fromNumber}`);
     console.log(`   To: ${callTo}`);
     console.log(`   Caller ID: ${callerIdNumber}`);
     console.log(`   Exotel URL: ${exotelUrl}`);
+    console.log(`   Account SID (URL): ${accountSid}`);
     console.log(`   Subdomain: ${subdomain}`);
-    console.log(`   SID: ${cleanSid ? cleanSid.substring(0, 4) + '...' : 'Not configured'}`);
-    console.log(`   Token: ${cleanToken ? cleanToken.substring(0, 4) + '...' : 'Not configured'}`);
+    console.log(`   API KEY: ${cleanApiKey ? cleanApiKey.substring(0, 8) + '...' : 'Not configured'}`);
+    console.log(`   API TOKEN: ${cleanToken ? cleanToken.substring(0, 4) + '...' : 'Not configured'}`);
 
     const response = await axios.post(exotelUrl, requestData.toString(), {
       headers: {
@@ -172,11 +181,12 @@ app.post('/exotel/call', async (req, res) => {
         error: 'Exotel authentication failed',
         message: 'Invalid Exotel credentials. Please check:',
         checks: [
-          '1. EXOTEL_SID is correct (from Exotel dashboard)',
-          '2. EXOTEL_TOKEN is correct (from Exotel dashboard)',
+          '1. EXOTEL_SID = API KEY (Username) from Exotel Dashboard → API Credentials → Default API key',
+          '2. EXOTEL_TOKEN = API TOKEN (Password) - Click eye icon to reveal, then copy',
           '3. No extra spaces or characters in credentials',
           '4. Credentials are set in Render Environment Variables',
-          '5. Service has been redeployed after adding credentials'
+          '5. Service has been redeployed after adding credentials',
+          '6. If token is masked, regenerate it or reveal it using the eye icon'
         ],
         details: error.response?.data || error.message,
       });
