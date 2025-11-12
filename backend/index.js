@@ -10,11 +10,11 @@ app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Exotel configuration from environment variables
-const EXOTEL_SUBDOMAIN = process.env.EXOTEL_SUBDOMAIN;
-const EXOTEL_SID = process.env.EXOTEL_SID;
-const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN;
-const EXOTEL_FROM = process.env.EXOTEL_FROM; // Your Exotel virtual number
+// Exotel configuration from environment variables (trim whitespace)
+const EXOTEL_SUBDOMAIN = process.env.EXOTEL_SUBDOMAIN?.trim();
+const EXOTEL_SID = process.env.EXOTEL_SID?.trim();
+const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN?.trim();
+const EXOTEL_FROM = process.env.EXOTEL_FROM?.trim(); // Your Exotel virtual number
 
 // Helper function to format Indian phone numbers
 function formatPhoneNumber(number) {
@@ -54,8 +54,22 @@ app.post('/exotel/call', async (req, res) => {
 
     // Check if Exotel credentials are configured
     if (!EXOTEL_SUBDOMAIN || !EXOTEL_SID || !EXOTEL_TOKEN) {
+      const missing = [];
+      if (!EXOTEL_SUBDOMAIN) missing.push('EXOTEL_SUBDOMAIN');
+      if (!EXOTEL_SID) missing.push('EXOTEL_SID');
+      if (!EXOTEL_TOKEN) missing.push('EXOTEL_TOKEN');
+      
       return res.status(500).json({ 
-        error: 'Exotel credentials not configured. Please set EXOTEL_SUBDOMAIN, EXOTEL_SID, and EXOTEL_TOKEN in environment variables on Render' 
+        error: 'Exotel credentials not configured',
+        missing: missing,
+        message: `Please set the following environment variables in Render: ${missing.join(', ')}`
+      });
+    }
+    
+    // Validate credentials are not empty after trimming
+    if (EXOTEL_SID.length === 0 || EXOTEL_TOKEN.length === 0) {
+      return res.status(500).json({ 
+        error: 'Exotel credentials are empty. Please check EXOTEL_SID and EXOTEL_TOKEN in Render environment variables' 
       });
     }
 
@@ -101,11 +115,16 @@ app.post('/exotel/call', async (req, res) => {
     });
 
     // Make API call to Exotel with Basic Auth
-    const auth = Buffer.from(`${EXOTEL_SID}:${EXOTEL_TOKEN}`).toString('base64');
+    // Ensure no extra whitespace in credentials
+    const cleanSid = EXOTEL_SID.trim();
+    const cleanToken = EXOTEL_TOKEN.trim();
+    const auth = Buffer.from(`${cleanSid}:${cleanToken}`).toString('base64');
     
     console.log(`Making Exotel call: From ${fromNumber} to ${callTo}`);
     console.log(`Exotel URL: ${exotelUrl}`);
     console.log(`Subdomain: ${subdomain}`);
+    console.log(`SID configured: ${cleanSid ? 'Yes (' + cleanSid.substring(0, 4) + '...)' : 'No'}`);
+    console.log(`Token configured: ${cleanToken ? 'Yes (' + cleanToken.substring(0, 4) + '...)' : 'No'}`);
 
     const response = await axios.post(exotelUrl, requestData.toString(), {
       headers: {
@@ -125,6 +144,23 @@ app.post('/exotel/call', async (req, res) => {
 
   } catch (error) {
     console.error('Exotel call error:', error.response?.data || error.message);
+    
+    // Handle 401 Unauthorized specifically
+    if (error.response?.status === 401 || error.response?.data?.RestException?.Status === 401) {
+      return res.status(401).json({
+        error: 'Exotel authentication failed',
+        message: 'Invalid Exotel credentials. Please check:',
+        checks: [
+          '1. EXOTEL_SID is correct (from Exotel dashboard)',
+          '2. EXOTEL_TOKEN is correct (from Exotel dashboard)',
+          '3. No extra spaces or characters in credentials',
+          '4. Credentials are set in Render Environment Variables',
+          '5. Service has been redeployed after adding credentials'
+        ],
+        details: error.response?.data || error.message,
+      });
+    }
+    
     res.status(500).json({
       error: 'Failed to initiate call',
       details: error.response?.data || error.message,
