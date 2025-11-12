@@ -15,7 +15,7 @@ const EXOTEL_SUBDOMAIN = process.env.EXOTEL_SUBDOMAIN?.trim();
 const EXOTEL_SID = process.env.EXOTEL_SID?.trim();
 const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN?.trim();
 const EXOTEL_APP_ID = process.env.EXOTEL_APP_ID?.trim() || '1117620'; // App ID (default: 1117620)
-const EXOTEL_FROM = process.env.EXOTEL_FROM?.trim(); // Your Exotel virtual number
+const EXOTEL_FROM = process.env.EXOTEL_FROM?.trim() || '07948516111'; // Exotel virtual number (default: 07948516111)
 
 // Helper function to format Indian phone numbers
 function formatPhoneNumber(number) {
@@ -76,8 +76,16 @@ app.post('/exotel/call', async (req, res) => {
 
     // Format phone numbers
     const callTo = formatPhoneNumber(to);
-    const fromNumber = from ? formatPhoneNumber(from) : (EXOTEL_FROM ? formatPhoneNumber(EXOTEL_FROM) : callTo);
+    // Use Exotel number as From (required for Exotel calls)
+    const fromNumber = from ? formatPhoneNumber(from) : formatPhoneNumber(EXOTEL_FROM);
     const callerIdNumber = callerId ? formatPhoneNumber(callerId) : fromNumber;
+    
+    // Validate that we have a From number
+    if (!fromNumber) {
+      return res.status(400).json({ 
+        error: 'From number is required. Please set EXOTEL_FROM in environment variables or provide "from" in request body.' 
+      });
+    }
     
     // Get base URL for status callback (from request or use Render URL)
     const baseUrl = req.protocol + '://' + req.get('host');
@@ -126,11 +134,14 @@ app.post('/exotel/call', async (req, res) => {
     const cleanToken = EXOTEL_TOKEN.trim();
     const auth = Buffer.from(`${cleanSid}:${cleanToken}`).toString('base64');
     
-    console.log(`Making Exotel call: From ${fromNumber} to ${callTo}`);
-    console.log(`Exotel URL: ${exotelUrl}`);
-    console.log(`Subdomain: ${subdomain}`);
-    console.log(`SID configured: ${cleanSid ? 'Yes (' + cleanSid.substring(0, 4) + '...)' : 'No'}`);
-    console.log(`Token configured: ${cleanToken ? 'Yes (' + cleanToken.substring(0, 4) + '...)' : 'No'}`);
+    console.log(`📞 Making Exotel call:`);
+    console.log(`   From (Exotel): ${fromNumber}`);
+    console.log(`   To: ${callTo}`);
+    console.log(`   Caller ID: ${callerIdNumber}`);
+    console.log(`   Exotel URL: ${exotelUrl}`);
+    console.log(`   Subdomain: ${subdomain}`);
+    console.log(`   SID: ${cleanSid ? cleanSid.substring(0, 4) + '...' : 'Not configured'}`);
+    console.log(`   Token: ${cleanToken ? cleanToken.substring(0, 4) + '...' : 'Not configured'}`);
 
     const response = await axios.post(exotelUrl, requestData.toString(), {
       headers: {
