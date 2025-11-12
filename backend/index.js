@@ -16,6 +16,32 @@ const EXOTEL_SID = process.env.EXOTEL_SID;
 const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN;
 const EXOTEL_FROM = process.env.EXOTEL_FROM; // Your Exotel virtual number
 
+// Helper function to format Indian phone numbers
+function formatPhoneNumber(number) {
+  if (!number) return number;
+  
+  // Remove any spaces, dashes, or special characters
+  let cleaned = number.toString().replace(/[\s\-\(\)]/g, '');
+  
+  // If already has country code, return as is
+  if (cleaned.startsWith('+91') || cleaned.startsWith('91')) {
+    return cleaned.startsWith('+') ? cleaned : '+' + cleaned;
+  }
+  
+  // If it's a 10-digit number starting with 9, add +91
+  if (/^9\d{9}$/.test(cleaned)) {
+    return '+91' + cleaned;
+  }
+  
+  // If it's a 10-digit number, add +91
+  if (/^\d{10}$/.test(cleaned)) {
+    return '+91' + cleaned;
+  }
+  
+  // Return as is if doesn't match patterns
+  return cleaned;
+}
+
 // Endpoint to make Exotel call (POST)
 app.post('/exotel/call', async (req, res) => {
   try {
@@ -29,17 +55,41 @@ app.post('/exotel/call', async (req, res) => {
     // Check if Exotel credentials are configured
     if (!EXOTEL_SUBDOMAIN || !EXOTEL_SID || !EXOTEL_TOKEN) {
       return res.status(500).json({ 
-        error: 'Exotel credentials not configured. Please set EXOTEL_SUBDOMAIN, EXOTEL_SID, and EXOTEL_TOKEN in .env file' 
+        error: 'Exotel credentials not configured. Please set EXOTEL_SUBDOMAIN, EXOTEL_SID, and EXOTEL_TOKEN in environment variables on Render' 
       });
     }
 
-    // Use provided 'from' or default from env, or use 'to' as caller ID
-    const fromNumber = from || EXOTEL_FROM || to;
-    const callTo = to;
-    const callerIdNumber = callerId || fromNumber;
+    // Format phone numbers
+    const callTo = formatPhoneNumber(to);
+    const fromNumber = from ? formatPhoneNumber(from) : (EXOTEL_FROM ? formatPhoneNumber(EXOTEL_FROM) : callTo);
+    const callerIdNumber = callerId ? formatPhoneNumber(callerId) : fromNumber;
+    
+    // Get base URL for status callback (from request or use Render URL)
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const statusCallbackUrl = req.body.statusCallback || `${baseUrl}/exotel/incoming`;
 
-    // Exotel API endpoint
-    const exotelUrl = `https://${EXOTEL_SUBDOMAIN}.exotel.com/v1/Accounts/${EXOTEL_SID}/Calls/connect.json`;
+    // Exotel API endpoint - handle subdomain format
+    let subdomain = EXOTEL_SUBDOMAIN.trim();
+    
+    // Remove any protocol (http:// or https://)
+    subdomain = subdomain.replace(/^https?:\/\//, '');
+    
+    // Remove .exotel.com if already included (handle multiple cases)
+    subdomain = subdomain.replace(/\.exotel\.com.*$/, '');
+    subdomain = subdomain.replace(/exotel\.com.*$/, '');
+    
+    // Remove trailing slashes
+    subdomain = subdomain.replace(/\/.*$/, '');
+    
+    // Validate subdomain
+    if (!subdomain || subdomain.length === 0) {
+      return res.status(500).json({ 
+        error: 'Invalid EXOTEL_SUBDOMAIN. It should be just the subdomain (e.g., "api" or "api1"), not a full URL.' 
+      });
+    }
+    
+    // Now construct the URL properly
+    const exotelUrl = `https://${subdomain}.exotel.com/v1/Accounts/${EXOTEL_SID}/Calls/connect.json`;
 
     // Prepare request data
     const requestData = new URLSearchParams({
@@ -47,13 +97,15 @@ app.post('/exotel/call', async (req, res) => {
       To: callTo,
       CallerId: callerIdNumber,
       TimeLimit: req.body.timeLimit || '30', // Optional: max call duration in seconds
-      StatusCallback: req.body.statusCallback || '', // Optional: webhook URL for call status
+      StatusCallback: statusCallbackUrl, // Webhook URL for call status updates
     });
 
     // Make API call to Exotel with Basic Auth
     const auth = Buffer.from(`${EXOTEL_SID}:${EXOTEL_TOKEN}`).toString('base64');
     
     console.log(`Making Exotel call: From ${fromNumber} to ${callTo}`);
+    console.log(`Exotel URL: ${exotelUrl}`);
+    console.log(`Subdomain: ${subdomain}`);
 
     const response = await axios.post(exotelUrl, requestData.toString(), {
       headers: {
@@ -96,6 +148,18 @@ app.post('/exotel/incoming', async (req, res) => {
     console.error("Webhook error:", error);
     res.status(500).send('Error handling webhook');
   }
+});
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Server is running',
+    endpoints: {
+      makeCall: 'POST /exotel/call',
+      webhook: 'POST /exotel/incoming'
+    },
+    webhookUrl: `${req.protocol}://${req.get('host')}/exotel/incoming`
+  });
 });
 
 const PORT = process.env.PORT || 5000;
