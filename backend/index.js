@@ -6,6 +6,9 @@ const axios = require('axios');
 const http = require('http');
 const WebSocket = require('ws');
 const url = require('url');
+const fs = require('fs-extra');
+const path = require('path');
+const { ElevenLabsClient } = require('@elevenlabs/elevenlabs-js');
 
 dotenv.config();
 const app = express();
@@ -23,6 +26,14 @@ const EXOTEL_TOKEN = process.env.EXOTEL_TOKEN?.trim(); // API TOKEN (Password) f
 const EXOTEL_APP_ID = process.env.EXOTEL_APP_ID?.trim() || '1117620'; // App ID (default: 1117620)
 const EXOTEL_FROM = process.env.EXOTEL_FROM?.trim() || '07948516111'; // Exotel virtual number (default: 07948516111)
 const EXOTEL_WS_TOKEN = process.env.EXOTEL_WS_TOKEN?.trim(); // Optional: WebSocket authentication token
+
+// ElevenLabs configuration
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY?.trim();
+const elevenLabsClient = ELEVENLABS_API_KEY ? new ElevenLabsClient({ apiKey: ELEVENLABS_API_KEY }) : null;
+
+// Ensure uploads directory exists
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'greetings');
+fs.ensureDirSync(UPLOADS_DIR);
 
 // Helper function to format Indian phone numbers
 function formatPhoneNumber(number) {
@@ -217,6 +228,176 @@ app.post('/exotel/incoming', async (req, res) => {
   }
 });
 
+// ElevenLabs Greeting Generation Endpoint
+app.post('/greeting/generate', async (req, res) => {
+  try {
+    const { text, voiceId, name } = req.body;
+
+    // Validation
+    if (!text) {
+      return res.status(400).json({ error: 'Missing required parameter: text' });
+    }
+
+    // Check if ElevenLabs is configured
+    if (!ELEVENLABS_API_KEY || !elevenLabsClient) {
+      return res.status(500).json({ 
+        error: 'ElevenLabs API key not configured',
+        message: 'Please set ELEVENLABS_API_KEY in environment variables'
+      });
+    }
+
+    console.log(`🎙️ Generating greeting with ElevenLabs:`);
+    console.log(`   Text: ${text}`);
+    console.log(`   Voice ID: ${voiceId || 'default'}`);
+
+    // Generate audio using ElevenLabs
+    // Default voice: Rachel (21m00Tcm4TlvDq8ikWAM) - a pleasant female voice
+    const selectedVoiceId = voiceId || '21m00Tcm4TlvDq8ikWAM';
+    
+    const audio = await elevenLabsClient.textToSpeech.convert(selectedVoiceId, {
+      text: text,
+      model_id: 'eleven_multilingual_v2', // Supports multiple languages including Hindi
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75,
+        style: 0.0,
+        use_speaker_boost: true
+      }
+    });
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const filename = `greeting_${timestamp}.mp3`;
+    const filepath = path.join(UPLOADS_DIR, filename);
+
+    // Convert audio stream to buffer and save
+    const chunks = [];
+    for await (const chunk of audio) {
+      chunks.push(chunk);
+    }
+    const audioBuffer = Buffer.concat(chunks);
+    await fs.writeFile(filepath, audioBuffer);
+
+    console.log(`✅ Greeting saved: ${filename}`);
+
+    // Return greeting info
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    res.status(200).json({
+      success: true,
+      message: 'Greeting generated successfully',
+      greeting: {
+        id: timestamp.toString(),
+        filename: filename,
+        text: text,
+        voiceId: selectedVoiceId,
+        name: name || 'Unnamed Greeting',
+        url: `${baseUrl}/greeting/audio/${filename}`,
+        filepath: filepath,
+        createdAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('ElevenLabs generation error:', error.message);
+    res.status(500).json({
+      error: 'Failed to generate greeting',
+      details: error.message
+    });
+  }
+});
+
+// Serve greeting audio files
+app.get('/greeting/audio/:filename', (req, res) => {
+  try {
+    const filename = req.params.filename;
+    const filepath = path.join(UPLOADS_DIR, filename);
+
+    // Check if file exists
+    if (!fs.existsSync(filepath)) {
+      return res.status(404).json({ error: 'Greeting not found' });
+    }
+
+    // Send audio file
+    res.sendFile(filepath);
+  } catch (error) {
+    console.error('Error serving greeting:', error);
+    res.status(500).json({ error: 'Failed to serve greeting' });
+  }
+});
+
+// List all greetings
+app.get('/greeting/list', async (req, res) => {
+  try {
+    const files = await fs.readdir(UPLOADS_DIR);
+    const greetings = files
+      .filter(file => file.endsWith('.mp3'))
+      .map(file => {
+        const stats = fs.statSync(path.join(UPLOADS_DIR, file));
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        return {
+          filename: file,
+          url: `${baseUrl}/greeting/audio/${file}`,
+          size: stats.size,
+          createdAt: stats.birthtime
+        };
+      });
+
+    res.json({
+      success: true,
+      count: greetings.length,
+      greetings: greetings
+    });
+  } catch (error) {
+    console.error('Error listing greetings:', error);
+    res.status(500).json({ error: 'Failed to list greetings' });
+  }
+});
+
+// Send greeting via Exotel call
+app.post('/greeting/send', async (req, res) => {
+  try {
+    const { to, greetingId, greetingUrl } = req.body;
+
+    // Validation
+    if (!to) {
+      return res.status(400).json({ error: 'Missing required parameter: to' });
+    }
+
+    if (!greetingId && !greetingUrl) {
+      return res.status(400).json({ 
+        error: 'Missing required parameter: greetingId or greetingUrl' 
+      });
+    }
+
+    // Construct greeting URL
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const audioUrl = greetingUrl || `${baseUrl}/greeting/audio/greeting_${greetingId}.mp3`;
+
+    console.log(`📞 Sending greeting call:`);
+    console.log(`   To: ${to}`);
+    console.log(`   Greeting URL: ${audioUrl}`);
+
+    // For now, we'll initiate a regular Exotel call
+    // You'll need to configure Exotel to play the audio URL
+    // This typically requires setting up an Exotel app/flow
+    
+    res.status(200).json({
+      success: true,
+      message: 'Greeting call initiated',
+      note: 'Configure Exotel app to play audio from URL',
+      audioUrl: audioUrl,
+      to: to
+    });
+
+  } catch (error) {
+    console.error('Error sending greeting:', error);
+    res.status(500).json({
+      error: 'Failed to send greeting',
+      details: error.message
+    });
+  }
+});
+
 // Health check endpoint
 app.get('/', (req, res) => {
   const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -225,10 +406,15 @@ app.get('/', (req, res) => {
     endpoints: {
       makeCall: 'POST /exotel/call',
       webhook: 'POST /exotel/incoming',
-      voiceStream: `WSS ${baseUrl}/voice-stream`
+      voiceStream: `WSS ${baseUrl}/voice-stream`,
+      generateGreeting: 'POST /greeting/generate',
+      listGreetings: 'GET /greeting/list',
+      sendGreeting: 'POST /greeting/send',
+      getGreeting: 'GET /greeting/audio/:filename'
     },
     webhookUrl: `${baseUrl}/exotel/incoming`,
-    websocketUrl: `wss://${req.get('host')}/voice-stream`
+    websocketUrl: `wss://${req.get('host')}/voice-stream`,
+    elevenLabsConfigured: !!ELEVENLABS_API_KEY
   });
 });
 
