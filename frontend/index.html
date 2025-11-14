@@ -224,8 +224,14 @@
                 <h2>Make a Call</h2>
                 <form id="callForm">
                     <div class="form-group">
-                        <label for="toNumber">To Number (10 digits)</label>
-                        <input type="tel" id="toNumber" placeholder="9324606985" required pattern="[0-9]{10}">
+                        <label for="fromNumber">From Number (Your Number - 10 digits)</label>
+                        <input type="tel" id="fromNumber" placeholder="9324606985" required pattern="[0-9]{10}">
+                        <small style="color: #666; font-size: 12px;">Enter your phone number</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="toNumber">To Number (Exotel Number)</label>
+                        <input type="tel" id="toNumber" value="07948516111" readonly style="background-color: #f5f5f5;">
+                        <small style="color: #666; font-size: 12px;">Exotel virtual number (fixed)</small>
                     </div>
                     <div class="form-group">
                         <label for="greeting">Greeting Message (Optional)</label>
@@ -255,8 +261,12 @@
                 <input type="text" value="https://one-calling-agent.onrender.com" readonly>
             </div>
             <div class="form-group">
-                <label>Exotel Number</label>
+                <label>Exotel Number (To)</label>
                 <input type="text" value="07948516111" readonly>
+            </div>
+            <div class="form-group">
+                <label>Your Number (From)</label>
+                <input type="text" placeholder="Enter your number in call form" readonly style="background-color: #f5f5f5;">
             </div>
         </div>
     </div>
@@ -276,7 +286,7 @@
             callsList.innerHTML = calls.slice(-5).reverse().map(call => `
                 <div class="call-item">
                     <h3>
-                        To: ${call.to}
+                        From: ${call.from || 'N/A'} → To: ${call.to || 'N/A'}
                         <span class="badge ${call.status === 'success' ? 'success' : call.status === 'in-progress' ? 'in-progress' : 'failed'}">
                             ${call.status}
                         </span>
@@ -291,7 +301,8 @@
         // Make call
         document.getElementById('callForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const toNumber = document.getElementById('toNumber').value;
+            const fromNumber = document.getElementById('fromNumber').value;
+            const toNumber = document.getElementById('toNumber').value; // Exotel number (fixed)
             const greeting = document.getElementById('greeting').value;
             const callBtn = document.getElementById('callBtn');
             const statusDiv = document.getElementById('callStatus');
@@ -309,7 +320,8 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        to: toNumber,
+                        from: fromNumber, // Your number
+                        to: toNumber, // Exotel number
                         greeting: greeting || undefined
                     })
                 });
@@ -322,6 +334,7 @@
 
                     // Save call to history
                     calls.push({
+                        from: fromNumber,
                         to: toNumber,
                         callSid: data.callSid,
                         status: 'success',
@@ -331,8 +344,9 @@
                     localStorage.setItem('calls', JSON.stringify(calls));
                     displayCalls();
 
-                    // Reset form
-                    document.getElementById('callForm').reset();
+                    // Reset form (keep Exotel number)
+                    document.getElementById('fromNumber').value = '';
+                    document.getElementById('greeting').value = '';
                 } else {
                     statusDiv.className = 'status error';
                     statusDiv.textContent = `❌ Error: ${data.error || 'Failed to initiate call'}`;
