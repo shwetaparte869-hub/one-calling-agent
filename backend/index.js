@@ -204,10 +204,11 @@ app.post('/exotel/call', async (req, res) => {
     const auth = Buffer.from(`${cleanApiKey}:${cleanToken}`).toString('base64');
     
     console.log(`📞 Making Exotel call:`);
-    console.log(`   From (Exotel): ${fromNumber}`);
-    console.log(`   To: ${callTo}`);
+    console.log(`   From (Exotel Caller): ${fromNumber}`);
+    console.log(`   To (Destination): ${callTo}`);
     console.log(`   Caller ID: ${callerIdNumber}`);
     console.log(`   Exotel URL: ${exotelUrl}`);
+    console.log(`   ⚠️ VERIFY: Call will go FROM ${fromNumber} TO ${callTo}`);
     console.log(`   Account SID (URL): ${accountSid}`);
     console.log(`   Subdomain: ${subdomain}`);
     console.log(`   API KEY: ${cleanApiKey ? cleanApiKey.substring(0, 8) + '...' : 'Not configured'}`);
