@@ -15,7 +15,9 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 // Serve frontend static files (before other routes)
-app.use(express.static('frontend'));
+const frontendPath = path.join(__dirname, '..', 'frontend');
+console.log('📁 Frontend path:', frontendPath);
+app.use(express.static(frontendPath));
 
 // Exotel configuration from environment variables (trim whitespace)
 // Note: EXOTEL_SID should be the API KEY (Username) from Exotel dashboard, not Account SID
@@ -352,7 +354,27 @@ app.get('/api/health', (req, res) => {
 
 // Serve frontend for root route
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'frontend', 'index.html'));
+  const indexPath = path.join(__dirname, '..', 'frontend', 'index.html');
+  console.log('📄 Serving frontend from:', indexPath);
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      console.error('❌ Error sending frontend file:', err);
+      console.error('   File path:', indexPath);
+      console.error('   __dirname:', __dirname);
+      // Fallback: send simple HTML
+      res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Exotel AI Calling Agent</title></head>
+        <body>
+          <h1>Exotel AI Calling Agent</h1>
+          <p>Frontend loading... If this persists, check server logs.</p>
+          <p>API Health: <a href="/api/health">/api/health</a></p>
+        </body>
+        </html>
+      `);
+    }
+  });
 });
 
 // Create HTTP server from Express app

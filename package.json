@@ -1,0 +1,14 @@
+{
+  "name": "one-calling-agent",
+  "version": "1.0.0",
+  "description": "Exotel AI Calling Agent with Frontend UI",
+  "main": "backend/index.js",
+  "scripts": {
+    "start": "cd backend && node index.js",
+    "dev": "cd backend && nodemon index.js"
+  },
+  "keywords": ["exotel", "calling", "ai", "voice"],
+  "author": "",
+  "license": "ISC"
+}
+
