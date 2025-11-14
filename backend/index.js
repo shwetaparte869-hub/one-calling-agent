@@ -84,11 +84,15 @@ app.post('/exotel/call', async (req, res) => {
     
     const { to, from, callerId } = req.body || {};
     
-    // Validation - 'from' field contains destination number, 'to' is optional
-    // If 'from' is provided, use it as destination, otherwise use 'to'
-    const destinationNumber = from || to;
+    // Validation - 'from' field contains destination number (where to call)
+    // Default to 9270497523 if not provided
+    const destinationNumber = from || to || '9270497523';
     
-    if (!destinationNumber) {
+    console.log(`📥 Call Request:`);
+    console.log(`   Request body:`, req.body);
+    console.log(`   Destination number: ${destinationNumber}`);
+    
+    if (!destinationNumber || destinationNumber.length < 10) {
       return res.status(400).json({ 
         error: 'Missing required parameter: destination number',
         message: 'Please provide the phone number where you want to call in the "Call To Number" field'
@@ -269,20 +273,26 @@ app.post('/exotel/call', async (req, res) => {
       });
     }
     
+    // OUTGOING CALL ONLY - Exotel Connect API
+    // This will create an OUTBOUND call from Exotel number to destination
+    // Direction will be automatically set to "outbound-api" by Exotel
     const requestData = new URLSearchParams({
-      From: fromNumberForAPI, // Exotel number: 07948516111
-      To: toNumberForAPI, // Destination: +919270497523
+      From: fromNumberForAPI, // Exotel number: 07948516111 (caller)
+      To: toNumberForAPI, // Destination: +919270497523 (where to call)
     });
     
-    // Add optional parameters
-    requestData.append('TimeLimit', req.body.timeLimit || '300'); // Max call duration
-    requestData.append('StatusCallback', statusCallbackUrl); // Status webhook
+    // Add optional parameters for OUTGOING call
+    requestData.append('TimeLimit', req.body.timeLimit || '300'); // Max call duration (5 minutes)
+    requestData.append('StatusCallback', statusCallbackUrl); // Status webhook for outgoing call
     requestData.append('StatusCallbackMethod', 'POST');
-    requestData.append('Record', 'true'); // Enable call recording
+    requestData.append('Record', 'true'); // Enable call recording for outgoing call
     requestData.append('RecordingStatusCallback', `${baseUrl}/exotel/recording-status`);
     requestData.append('RecordingStatusCallbackMethod', 'POST');
     
-    // Note: CallerId removed as it might cause routing issues
+    console.log(`📞 OUTGOING CALL Configuration:`);
+    console.log(`   Direction: outbound-api (automatic)`);
+    console.log(`   From (Caller): ${fromNumberForAPI}`);
+    console.log(`   To (Destination): ${toNumberForAPI}`);
     
     // Add App ID if provided (optional, some Exotel accounts require it)
     if (EXOTEL_APP_ID || req.body.appId) {
@@ -410,30 +420,38 @@ app.post('/exotel/call', async (req, res) => {
   }
 });
 
-// Exotel webhook (POST) - receives callbacks from Exotel
+// Exotel webhook (POST) - receives status callbacks from Exotel for OUTGOING calls only
+// NOTE: This endpoint only receives status updates, it does NOT initiate calls
+// All calls are initiated via /exotel/call endpoint (outgoing only)
 app.post('/exotel/incoming', async (req, res) => {
   try {
-    console.log("📥 Exotel Status Callback received:");
+    console.log("📥 Exotel Status Callback received (OUTGOING CALL STATUS):");
     console.log("   Full data:", JSON.stringify(req.body, null, 2));
 
     const { From, To, CallSid, CallStatus, CallDuration, Direction } = req.body;
 
-    // Store call information
-    console.log(`📞 Call Status Update:`);
+    // Only log outgoing calls (ignore incoming if any)
+    if (Direction && Direction.toLowerCase().includes('inbound')) {
+      console.log(`⚠️ Incoming call detected - ignoring (only outgoing calls supported)`);
+      return res.status(200).send('Webhook received (incoming call ignored)');
+    }
+
+    // Store call information for OUTGOING calls only
+    console.log(`📞 Outgoing Call Status Update:`);
     console.log(`   Call SID: ${CallSid}`);
-    console.log(`   From: ${From}`);
-    console.log(`   To: ${To}`);
+    console.log(`   From (Exotel): ${From}`);
+    console.log(`   To (Destination): ${To}`);
     console.log(`   Status: ${CallStatus}`);
-    console.log(`   Direction: ${Direction || 'N/A'}`);
+    console.log(`   Direction: ${Direction || 'outbound-api'}`);
     console.log(`   Duration: ${CallDuration || '0'} seconds`);
     
     // Log important status changes
     if (CallStatus === 'completed') {
-      console.log(`✅ Call completed successfully! Duration: ${CallDuration}s`);
+      console.log(`✅ Outgoing call completed successfully! Duration: ${CallDuration}s`);
     } else if (CallStatus === 'failed' || CallStatus === 'busy' || CallStatus === 'no-answer') {
-      console.log(`❌ Call failed with status: ${CallStatus}`);
+      console.log(`❌ Outgoing call failed with status: ${CallStatus}`);
     } else if (CallStatus === 'ringing' || CallStatus === 'in-progress') {
-      console.log(`📞 Call is ${CallStatus}...`);
+      console.log(`📞 Outgoing call is ${CallStatus}...`);
     }
 
     // Respond OK to Exotel

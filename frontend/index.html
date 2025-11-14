@@ -226,7 +226,7 @@
                     <div class="form-group">
                         <label for="fromNumber">Call To Number (Destination - 10 digits)</label>
                         <input type="tel" id="fromNumber" value="9270497523" placeholder="9270497523" required pattern="[0-9]{10}">
-                        <small style="color: #666; font-size: 12px;">Enter the phone number where you want to call</small>
+                        <small style="color: #666; font-size: 12px;">Enter the phone number where you want to call (Default: 9270497523)</small>
                     </div>
                     <div class="form-group">
                         <label for="toNumber">From Number (Exotel Number - Caller ID)</label>
@@ -286,41 +286,55 @@
             callsList.innerHTML = calls.slice(-5).reverse().map(call => `
                 <div class="call-item">
                     <h3>
-                        From: ${call.from || 'N/A'} → To: ${call.to || 'N/A'}
+                        📞 Outgoing: ${call.from || '07948516111'} → ${call.to || 'N/A'}
                         <span class="badge ${call.status === 'success' ? 'success' : call.status === 'in-progress' ? 'in-progress' : 'failed'}">
-                            ${call.status}
+                            ${call.status || 'outgoing'}
                         </span>
                     </h3>
                     <p><strong>Call SID:</strong> ${call.callSid || 'N/A'}</p>
                     <p><strong>Time:</strong> ${new Date(call.timestamp).toLocaleString()}</p>
+                    <p><strong>Direction:</strong> <span style="color: #4CAF50;">Outgoing</span></p>
                     ${call.greeting ? `<p><strong>Greeting:</strong> ${call.greeting}</p>` : ''}
                 </div>
             `).join('');
         }
 
-        // Make call
+        // Make OUTGOING call only
         document.getElementById('callForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const fromNumber = document.getElementById('fromNumber').value;
-            const toNumber = document.getElementById('toNumber').value; // Exotel number (fixed)
+            const destinationNumber = document.getElementById('fromNumber').value.trim(); // Where to call (default: 9270497523)
+            const exotelNumber = document.getElementById('toNumber').value; // Exotel number (fixed: 07948516111)
             const greeting = document.getElementById('greeting').value;
             const callBtn = document.getElementById('callBtn');
             const statusDiv = document.getElementById('callStatus');
 
+            // Validate destination number
+            if (!destinationNumber || destinationNumber.length !== 10) {
+                statusDiv.className = 'status error';
+                statusDiv.textContent = '❌ Please enter a valid 10-digit phone number';
+                statusDiv.style.display = 'block';
+                return;
+            }
+
+            // Default to 9270497523 if empty
+            const finalDestination = destinationNumber || '9270497523';
+
             callBtn.disabled = true;
             callBtn.innerHTML = '📞 Calling... <span class="loading"></span>';
             statusDiv.className = 'status info';
-            statusDiv.textContent = 'Initiating call...';
+            statusDiv.textContent = `Initiating OUTGOING call to ${finalDestination}...`;
             statusDiv.style.display = 'block';
 
             try {
+                // Send OUTGOING call request
+                // 'from' field = destination number (where to call)
                 const response = await fetch(`${API_URL}/exotel/call`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        from: fromNumber, // Destination number (where to call)
+                        from: finalDestination, // Destination number (where to call) - default: 9270497523
                         greeting: greeting || undefined
                     })
                 });
@@ -329,26 +343,27 @@
 
                 if (response.ok && data.success) {
                     statusDiv.className = 'status success';
-                    statusDiv.textContent = `✅ Call initiated successfully! Call SID: ${data.callSid}`;
+                    statusDiv.textContent = `✅ OUTGOING call initiated to ${finalDestination}! Call SID: ${data.callSid}`;
 
-                    // Save call to history
+                    // Save OUTGOING call to history
                     calls.push({
-                        from: toNumber, // Exotel number (caller)
-                        to: fromNumber, // Destination number
+                        from: exotelNumber, // Exotel number (caller: 07948516111)
+                        to: finalDestination, // Destination number (where called: 9270497523)
                         callSid: data.callSid,
                         status: 'success',
                         timestamp: new Date().toISOString(),
-                        greeting: greeting
+                        greeting: greeting || null,
+                        direction: 'outgoing' // Mark as outgoing
                     });
                     localStorage.setItem('calls', JSON.stringify(calls));
                     displayCalls();
 
-                    // Reset form (keep Exotel number)
-                    document.getElementById('fromNumber').value = '';
+                    // Reset form (keep default number)
+                    document.getElementById('fromNumber').value = '9270497523';
                     document.getElementById('greeting').value = '';
                 } else {
                     statusDiv.className = 'status error';
-                    statusDiv.textContent = `❌ Error: ${data.error || 'Failed to initiate call'}`;
+                    statusDiv.textContent = `❌ Error: ${data.error || 'Failed to initiate outgoing call'}`;
                 }
             } catch (error) {
                 statusDiv.className = 'status error';
