@@ -125,29 +125,53 @@ app.post('/exotel/call', async (req, res) => {
     const fromNumber = formatPhoneNumber(EXOTEL_FROM); // Always use Exotel number as caller
     
     // CRITICAL: Format destination number properly for Exotel
-    // Exotel expects: +91XXXXXXXXXX format for Indian numbers
+    // Exotel API expects specific format - let's ensure it's correct
     let callTo = formatPhoneNumber(destinationNumber);
     
-    // Ensure proper format: +91XXXXXXXXXX (11 digits after +91)
-    if (!callTo.startsWith('+91')) {
-      // Remove any leading 0 or country code
-      let cleanNum = callTo.replace(/^\+?91?0?/, '');
+    // Remove + if present and ensure proper format
+    // Exotel might expect: 91XXXXXXXXXX (without +) or 0XXXXXXXXXX
+    // Let's try with +91 first, if that doesn't work, we'll try without +
+    let callToFormatted = callTo;
+    
+    // Ensure it's +91XXXXXXXXXX format (13 characters total)
+    if (callToFormatted.startsWith('+91') && callToFormatted.length === 13) {
+      // Perfect format: +919270497523
+      console.log(`✅ Destination number properly formatted: ${callToFormatted}`);
+    } else if (callToFormatted.startsWith('91') && callToFormatted.length === 12) {
+      // Add + prefix
+      callToFormatted = '+' + callToFormatted;
+      console.log(`✅ Added + prefix: ${callToFormatted}`);
+    } else if (callToFormatted.length === 10) {
+      // 10 digit number - add +91
+      callToFormatted = '+91' + callToFormatted;
+      console.log(`✅ Added +91 prefix: ${callToFormatted}`);
+    } else {
+      // Try to clean and reformat
+      let cleanNum = callToFormatted.replace(/^\+?91?0?/, '');
       if (cleanNum.length === 10) {
-        callTo = '+91' + cleanNum;
+        callToFormatted = '+91' + cleanNum;
+        console.log(`✅ Cleaned and reformatted: ${callToFormatted}`);
       }
     }
+    
+    callTo = callToFormatted;
     
     console.log(`🔢 Number Formatting Check:`);
     console.log(`   Input destination: ${destinationNumber}`);
     console.log(`   Formatted destination: ${callTo}`);
     console.log(`   From (Exotel): ${fromNumber}`);
+    console.log(`   Destination length: ${callTo.length} characters`);
     
-    // Final validation
-    if (callTo === fromNumber) {
-      console.log(`   ⚠️ ERROR: Destination same as From number! This will cause call loop!`);
+    // Final validation - CRITICAL CHECK
+    if (callTo === fromNumber || callTo.replace('+', '') === fromNumber.replace('+', '')) {
+      console.log(`   ❌ FATAL ERROR: Destination same as From number!`);
+      console.log(`      From: ${fromNumber}`);
+      console.log(`      To: ${callTo}`);
       return res.status(400).json({ 
         error: 'Invalid destination number',
-        message: 'Destination number cannot be same as Exotel number. Please provide a different number.'
+        message: `Destination number (${callTo}) cannot be same as Exotel number (${fromNumber}). Please provide a different number.`,
+        from: fromNumber,
+        to: callTo
       });
     }
     
@@ -203,19 +227,62 @@ app.post('/exotel/call', async (req, res) => {
     const voiceFlowUrl = `${baseUrl}/exotel/voice-flow`;
     
     // Prepare request data for Exotel Connect API
-    // Note: For basic outbound calls, Exotel Connect API directly connects From to To
-    // Url parameter is optional - only needed if you want custom call handling
+    // CRITICAL: Exotel API expects specific number formats:
+    // From: Exotel virtual number in format 0XXXXXXXXXX (without +91, with leading 0)
+    // To: Destination number in format +91XXXXXXXXXX (with +91)
+    
+    // Format From number for Exotel API (remove +91, ensure leading 0)
+    let fromNumberForAPI = fromNumber;
+    if (fromNumber.startsWith('+91')) {
+      fromNumberForAPI = '0' + fromNumber.substring(3); // +917948516111 -> 07948516111
+    } else if (fromNumber.startsWith('91')) {
+      fromNumberForAPI = '0' + fromNumber.substring(2); // 917948516111 -> 07948516111
+    } else if (!fromNumber.startsWith('0') && fromNumber.length === 10) {
+      fromNumberForAPI = '0' + fromNumber; // 7948516111 -> 07948516111
+    }
+    
+    // Format To number for Exotel API (ensure +91 format)
+    let toNumberForAPI = callTo;
+    if (!toNumberForAPI.startsWith('+91')) {
+      if (toNumberForAPI.startsWith('91')) {
+        toNumberForAPI = '+' + toNumberForAPI; // 919270497523 -> +919270497523
+      } else if (toNumberForAPI.startsWith('0')) {
+        toNumberForAPI = '+91' + toNumberForAPI.substring(1); // 09270497523 -> +919270497523
+      } else if (toNumberForAPI.length === 10) {
+        toNumberForAPI = '+91' + toNumberForAPI; // 9270497523 -> +919270497523
+      }
+    }
+    
+    console.log(`📋 Exotel API Number Formats:`);
+    console.log(`   From (Exotel): ${fromNumber} -> ${fromNumberForAPI} (for API)`);
+    console.log(`   To (Destination): ${callTo} -> ${toNumberForAPI} (for API)`);
+    console.log(`   ⚠️ VERIFY: From (${fromNumberForAPI}) != To (${toNumberForAPI})`);
+    
+    // Final check - ensure they're different
+    if (fromNumberForAPI === toNumberForAPI || fromNumberForAPI.replace('0', '+91') === toNumberForAPI) {
+      console.log(`   ❌ FATAL: Numbers are the same after formatting!`);
+      return res.status(400).json({
+        error: 'Call routing error',
+        message: 'From and To numbers cannot be the same after formatting.',
+        from: fromNumberForAPI,
+        to: toNumberForAPI
+      });
+    }
+    
     const requestData = new URLSearchParams({
-      From: fromNumber, // Exotel number (caller)
-      To: callTo, // Destination number (where call should go)
-      CallerId: callerIdNumber, // Caller ID to display
-      TimeLimit: req.body.timeLimit || '300', // Max call duration (5 minutes)
-      StatusCallback: statusCallbackUrl, // Webhook URL for call status updates
-      StatusCallbackMethod: 'POST', // Ensure POST method for status callbacks
-      Record: 'true', // Enable call recording
-      RecordingStatusCallback: `${baseUrl}/exotel/recording-status`, // Recording status webhook
-      RecordingStatusCallbackMethod: 'POST',
+      From: fromNumberForAPI, // Exotel number: 07948516111
+      To: toNumberForAPI, // Destination: +919270497523
     });
+    
+    // Add optional parameters
+    requestData.append('TimeLimit', req.body.timeLimit || '300'); // Max call duration
+    requestData.append('StatusCallback', statusCallbackUrl); // Status webhook
+    requestData.append('StatusCallbackMethod', 'POST');
+    requestData.append('Record', 'true'); // Enable call recording
+    requestData.append('RecordingStatusCallback', `${baseUrl}/exotel/recording-status`);
+    requestData.append('RecordingStatusCallbackMethod', 'POST');
+    
+    // Note: CallerId removed as it might cause routing issues
     
     // Add App ID if provided (optional, some Exotel accounts require it)
     if (EXOTEL_APP_ID || req.body.appId) {
@@ -244,12 +311,11 @@ app.post('/exotel/call', async (req, res) => {
     const auth = Buffer.from(`${cleanApiKey}:${cleanToken}`).toString('base64');
     
     console.log(`📞 Making Exotel call:`);
-    console.log(`   From (Exotel Caller): ${fromNumber}`);
-    console.log(`   To (Destination): ${callTo}`);
-    console.log(`   Caller ID: ${callerIdNumber}`);
+    console.log(`   From (Exotel Caller): ${fromNumber} -> ${fromNumberForAPI} (API format)`);
+    console.log(`   To (Destination): ${callTo} -> ${toNumberForAPI} (API format)`);
     console.log(`   Exotel URL: ${exotelUrl}`);
-    console.log(`   ⚠️ CRITICAL VERIFY: Call will go FROM ${fromNumber} TO ${callTo}`);
-    console.log(`   📋 Request will send: From=${fromNumber}, To=${callTo}`);
+    console.log(`   ⚠️ CRITICAL VERIFY: Call will go FROM ${fromNumberForAPI} TO ${toNumberForAPI}`);
+    console.log(`   📋 API Request: From=${fromNumberForAPI}, To=${toNumberForAPI}`);
     console.log(`   Account SID (URL): ${accountSid}`);
     console.log(`   Subdomain: ${subdomain}`);
     console.log(`   API KEY: ${cleanApiKey ? cleanApiKey.substring(0, 8) + '...' : 'Not configured'}`);
@@ -259,8 +325,17 @@ app.post('/exotel/call', async (req, res) => {
     console.log(`📤 Sending request to Exotel:`);
     console.log(`   URL: ${exotelUrl}`);
     console.log(`   Request Body: ${requestData.toString()}`);
-    console.log(`   From parameter: ${fromNumber}`);
-    console.log(`   To parameter: ${callTo}`);
+    console.log(`   ⚠️ FINAL VERIFICATION:`);
+    console.log(`      From (API): ${fromNumberForAPI}`);
+    console.log(`      To (API): ${toNumberForAPI}`);
+    console.log(`      Different? ${fromNumberForAPI !== toNumberForAPI ? '✅ YES' : '❌ NO - ERROR!'}`);
+    
+    // Parse and display each parameter
+    const params = new URLSearchParams(requestData.toString());
+    console.log(`   📋 Request Parameters:`);
+    for (const [key, value] of params.entries()) {
+      console.log(`      ${key}: ${value}`);
+    }
     
     const response = await axios.post(exotelUrl, requestData.toString(), {
       headers: {
