@@ -6,6 +6,7 @@ const axios = require('axios');
 const http = require('http');
 const WebSocket = require('ws');
 const url = require('url');
+const path = require('path');
 
 dotenv.config();
 const app = express();
@@ -334,8 +335,8 @@ app.post('/exotel/transcription-callback', (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/', (req, res) => {
+// Health check endpoint (API info)
+app.get('/api/health', (req, res) => {
   const baseUrl = `${req.protocol}://${req.get('host')}`;
   res.json({ 
     status: 'Server is running',
@@ -347,6 +348,11 @@ app.get('/', (req, res) => {
     webhookUrl: `${baseUrl}/exotel/incoming`,
     websocketUrl: `wss://${req.get('host')}/voice-stream`
   });
+});
+
+// Serve frontend for root route
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'frontend', 'index.html'));
 });
 
 // Create HTTP server from Express app
