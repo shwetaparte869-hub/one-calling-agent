@@ -83,10 +83,16 @@ app.post('/exotel/call', async (req, res) => {
     }
     
     const { to, from, callerId } = req.body || {};
-
-    // Validation
-    if (!to) {
-      return res.status(400).json({ error: 'Missing required parameter: to' });
+    
+    // Validation - 'from' field contains destination number, 'to' is optional
+    // If 'from' is provided, use it as destination, otherwise use 'to'
+    const destinationNumber = from || to;
+    
+    if (!destinationNumber) {
+      return res.status(400).json({ 
+        error: 'Missing required parameter: destination number',
+        message: 'Please provide the phone number where you want to call in the "Call To Number" field'
+      });
     }
 
     // Check if Exotel credentials are configured
@@ -117,7 +123,7 @@ app.post('/exotel/call', async (req, res) => {
     // From: Exotel virtual number (caller ID - fixed)
     // To: User's destination number (where call should go)
     const fromNumber = formatPhoneNumber(EXOTEL_FROM); // Always use Exotel number as caller
-    const callTo = from ? formatPhoneNumber(from) : (to ? formatPhoneNumber(to) : null); // User's number (destination)
+    const callTo = formatPhoneNumber(destinationNumber); // User's destination number
     const callerIdNumber = callerId ? formatPhoneNumber(callerId) : fromNumber;
     
     // Validate that we have a destination number (user's number)
