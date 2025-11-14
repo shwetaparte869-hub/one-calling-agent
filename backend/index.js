@@ -84,20 +84,13 @@ app.post('/exotel/call', async (req, res) => {
     
     const { to, from, callerId } = req.body || {};
     
-    // Validation - 'from' field contains destination number (where to call)
-    // Default to 9270497523 if not provided
-    const destinationNumber = from || to || '9270497523';
+    // FORCE destination to 9270497523 (as per user requirement)
+    // This ensures all calls go to this specific number
+    const destinationNumber = '9270497523';
     
     console.log(`📥 Call Request:`);
     console.log(`   Request body:`, req.body);
-    console.log(`   Destination number: ${destinationNumber}`);
-    
-    if (!destinationNumber || destinationNumber.length < 10) {
-      return res.status(400).json({ 
-        error: 'Missing required parameter: destination number',
-        message: 'Please provide the phone number where you want to call in the "Call To Number" field'
-      });
-    }
+    console.log(`   Destination number: ${destinationNumber} (FIXED)`);
 
     // Check if Exotel credentials are configured
     // EXOTEL_SID = API KEY (Username) from Exotel dashboard
@@ -294,15 +287,15 @@ app.post('/exotel/call', async (req, res) => {
     console.log(`   From (Caller): ${fromNumberForAPI}`);
     console.log(`   To (Destination): ${toNumberForAPI}`);
     
-    // Add App ID if provided (optional, some Exotel accounts require it)
-    if (EXOTEL_APP_ID || req.body.appId) {
-      requestData.append('AppId', EXOTEL_APP_ID || req.body.appId);
-    }
+    // CRITICAL: Always add App ID (1117620) to route through Voice Flow
+    // This ensures the call goes through the configured Voice Flow in Exotel dashboard
+    const appIdToUse = EXOTEL_APP_ID || req.body.appId || '1117620';
+    requestData.append('AppId', appIdToUse);
+    console.log(`   App ID: ${appIdToUse} (Voice Flow routing enabled)`);
     
-    // Optional: Add Url for custom call handling (greeting, etc.)
-    // If you want greeting, uncomment this:
-    // const callConnectUrl = `${baseUrl}/exotel/call-connect`;
-    // requestData.append('Url', callConnectUrl);
+    // Note: Voice Flow URL is configured in Exotel dashboard
+    // URL: https://one-calling-agent.onrender.com/exotel/voice-flow
+    // The App ID will route the call through this flow
     
     console.log(`📋 Request Parameters:`);
     console.log(`   From: ${fromNumber}`);
@@ -494,15 +487,20 @@ app.post('/exotel/call-connect', (req, res) => {
 });
 
 // Exotel Voice Flow Webhook - Returns TwiML for greeting and recording
+// This endpoint is called by Exotel when a call goes through the Voice Flow (App ID: 1117620)
 app.post('/exotel/voice-flow', (req, res) => {
   try {
-    const { From, To, CallSid } = req.body;
+    const { From, To, CallSid, Direction } = req.body;
     const greetingText = req.body.greeting || 'Hello! This is an automated call from Exotel. How can I help you today?';
     
     console.log(`📞 Voice flow triggered for Call SID: ${CallSid}`);
     console.log(`   From: ${From}, To: ${To}`);
+    console.log(`   Direction: ${Direction || 'outbound-api'}`);
     console.log(`   Greeting: ${greetingText}`);
 
+    // For OUTGOING calls, the call is already connected to destination (To: 9270497523)
+    // We just need to handle the conversation flow
+    
     // Generate TwiML response for Exotel
     // Exotel uses TwiML format for voice instructions
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -510,20 +508,12 @@ app.post('/exotel/voice-flow', (req, res) => {
     <!-- Play greeting using TTS -->
     <Say voice="alice" language="en-IN">${greetingText}</Say>
     
-    <!-- Record the call -->
-    <Record 
-        action="${req.protocol}://${req.get('host')}/exotel/recording-callback"
-        method="POST"
-        maxLength="300"
-        finishOnKey="#"
-        recordingStatusCallback="${req.protocol}://${req.get('host')}/exotel/recording-status"
-        recordingStatusCallbackMethod="POST"
-        transcribe="true"
-        transcribeCallback="${req.protocol}://${req.get('host')}/exotel/transcription-callback"
-    />
+    <!-- Note: Call recording is already enabled in Exotel dashboard (Dual channels) -->
+    <!-- Keep call connected for conversation (300 seconds = 5 minutes) -->
+    <Pause length="300"/>
     
-    <!-- Thank you message after recording -->
-    <Say voice="alice" language="en-IN">Thank you for your message. Have a great day!</Say>
+    <!-- Thank you message -->
+    <Say voice="alice" language="en-IN">Thank you for your time. Have a great day!</Say>
     
     <!-- Hangup -->
     <Hangup/>
@@ -531,9 +521,12 @@ app.post('/exotel/voice-flow', (req, res) => {
 
     res.type('text/xml');
     res.send(twiml);
+    console.log(`✅ Voice Flow TwiML sent for Call SID: ${CallSid}`);
   } catch (error) {
-    console.error("Voice flow error:", error);
-    res.status(500).send('Error in voice flow');
+    console.error("❌ Voice flow error:", error);
+    // Return minimal TwiML on error to avoid breaking the call
+    res.type('text/xml');
+    res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Call connected.</Say><Pause length="300"/><Hangup/></Response>');
   }
 });
 
