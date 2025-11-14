@@ -113,23 +113,24 @@ app.post('/exotel/call', async (req, res) => {
     }
 
     // Format phone numbers
-    // From: User's number (provided in request)
-    // To: Exotel number (fixed)
-    const fromNumber = from ? formatPhoneNumber(from) : formatPhoneNumber(EXOTEL_FROM);
-    const callTo = to ? formatPhoneNumber(to) : formatPhoneNumber(EXOTEL_FROM); // Exotel number as destination
+    // IMPORTANT: For Exotel outbound calls:
+    // From: Exotel virtual number (caller ID - fixed)
+    // To: User's destination number (where call should go)
+    const fromNumber = formatPhoneNumber(EXOTEL_FROM); // Always use Exotel number as caller
+    const callTo = from ? formatPhoneNumber(from) : (to ? formatPhoneNumber(to) : null); // User's number (destination)
     const callerIdNumber = callerId ? formatPhoneNumber(callerId) : fromNumber;
     
-    // Validate that we have a From number (user's number)
-    if (!fromNumber) {
+    // Validate that we have a destination number (user's number)
+    if (!callTo) {
       return res.status(400).json({ 
-        error: 'From number is required. Please provide your phone number in the "from" field.' 
+        error: 'Destination number is required. Please provide the phone number where you want to call in the "from" field.' 
       });
     }
     
-    // Validate that we have a To number (Exotel number)
-    if (!callTo) {
+    // Validate that we have Exotel number as caller
+    if (!fromNumber) {
       return res.status(400).json({ 
-        error: 'To number is required. Exotel number should be set.' 
+        error: 'Exotel number not configured. Please set EXOTEL_FROM in environment variables.' 
       });
     }
     
