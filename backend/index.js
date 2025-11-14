@@ -10,9 +10,17 @@ const path = require('path');
 
 dotenv.config();
 const app = express();
+
+// CORS middleware
 app.use(cors());
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+
+// Body parser middleware - MUST be before routes
+// Express 5 has built-in body parsing, but we'll use both for compatibility
+app.use(express.json({ limit: '10mb' })); // Parse JSON bodies
+app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Parse URL-encoded bodies
+// Keep body-parser for additional compatibility
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve frontend static files (before other routes)
 const frontendPath = path.join(__dirname, '..', 'frontend');
@@ -59,7 +67,22 @@ function formatPhoneNumber(number) {
 // Endpoint to make Exotel call (POST)
 app.post('/exotel/call', async (req, res) => {
   try {
-    const { to, from, callerId } = req.body;
+    // Debug: Log request body
+    console.log('📥 Request received:', {
+      body: req.body,
+      contentType: req.get('content-type'),
+      method: req.method
+    });
+    
+    // Check if body exists
+    if (!req.body) {
+      return res.status(400).json({ 
+        error: 'Request body is missing',
+        message: 'Please send JSON data with Content-Type: application/json'
+      });
+    }
+    
+    const { to, from, callerId } = req.body || {};
 
     // Validation
     if (!to) {
