@@ -123,7 +123,34 @@ app.post('/exotel/call', async (req, res) => {
     // From: Exotel virtual number (caller ID - fixed)
     // To: User's destination number (where call should go)
     const fromNumber = formatPhoneNumber(EXOTEL_FROM); // Always use Exotel number as caller
-    const callTo = formatPhoneNumber(destinationNumber); // User's destination number
+    
+    // CRITICAL: Format destination number properly for Exotel
+    // Exotel expects: +91XXXXXXXXXX format for Indian numbers
+    let callTo = formatPhoneNumber(destinationNumber);
+    
+    // Ensure proper format: +91XXXXXXXXXX (11 digits after +91)
+    if (!callTo.startsWith('+91')) {
+      // Remove any leading 0 or country code
+      let cleanNum = callTo.replace(/^\+?91?0?/, '');
+      if (cleanNum.length === 10) {
+        callTo = '+91' + cleanNum;
+      }
+    }
+    
+    console.log(`🔢 Number Formatting Check:`);
+    console.log(`   Input destination: ${destinationNumber}`);
+    console.log(`   Formatted destination: ${callTo}`);
+    console.log(`   From (Exotel): ${fromNumber}`);
+    
+    // Final validation
+    if (callTo === fromNumber) {
+      console.log(`   ⚠️ ERROR: Destination same as From number! This will cause call loop!`);
+      return res.status(400).json({ 
+        error: 'Invalid destination number',
+        message: 'Destination number cannot be same as Exotel number. Please provide a different number.'
+      });
+    }
+    
     const callerIdNumber = callerId ? formatPhoneNumber(callerId) : fromNumber;
     
     // Validate that we have a destination number (user's number)
@@ -221,12 +248,20 @@ app.post('/exotel/call', async (req, res) => {
     console.log(`   To (Destination): ${callTo}`);
     console.log(`   Caller ID: ${callerIdNumber}`);
     console.log(`   Exotel URL: ${exotelUrl}`);
-    console.log(`   ⚠️ VERIFY: Call will go FROM ${fromNumber} TO ${callTo}`);
+    console.log(`   ⚠️ CRITICAL VERIFY: Call will go FROM ${fromNumber} TO ${callTo}`);
+    console.log(`   📋 Request will send: From=${fromNumber}, To=${callTo}`);
     console.log(`   Account SID (URL): ${accountSid}`);
     console.log(`   Subdomain: ${subdomain}`);
     console.log(`   API KEY: ${cleanApiKey ? cleanApiKey.substring(0, 8) + '...' : 'Not configured'}`);
     console.log(`   API TOKEN: ${cleanToken ? cleanToken.substring(0, 4) + '...' : 'Not configured'}`);
 
+    // Log the exact request being sent
+    console.log(`📤 Sending request to Exotel:`);
+    console.log(`   URL: ${exotelUrl}`);
+    console.log(`   Request Body: ${requestData.toString()}`);
+    console.log(`   From parameter: ${fromNumber}`);
+    console.log(`   To parameter: ${callTo}`);
+    
     const response = await axios.post(exotelUrl, requestData.toString(), {
       headers: {
         'Authorization': `Basic ${auth}`,
@@ -239,16 +274,25 @@ app.post('/exotel/call', async (req, res) => {
     // Check call status from response
     const callStatus = response.data.Call?.Status || response.data.Status || 'unknown';
     const callSid = response.data.Call?.Sid || response.data.CallSid;
+    const responseFrom = response.data.Call?.From;
+    const responseTo = response.data.Call?.To;
     
     console.log(`📊 Call Status: ${callStatus}`);
     console.log(`📞 Call SID: ${callSid}`);
     
-    // Log important call details
+    // Log important call details and verify
     if (response.data.Call) {
-      console.log(`   From: ${response.data.Call.From}`);
-      console.log(`   To: ${response.data.Call.To}`);
+      console.log(`   Response From: ${responseFrom}`);
+      console.log(`   Response To: ${responseTo}`);
       console.log(`   Direction: ${response.data.Call.Direction}`);
       console.log(`   Status: ${response.data.Call.Status}`);
+      
+      // CRITICAL: Verify the destination number matches
+      if (responseTo !== callTo && responseTo !== `0${callTo.replace('+91', '')}`) {
+        console.log(`   ⚠️ WARNING: Response To (${responseTo}) doesn't match requested To (${callTo})!`);
+      } else {
+        console.log(`   ✅ Verified: Response To matches requested destination`);
+      }
     }
 
     res.status(200).json({
