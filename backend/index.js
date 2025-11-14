@@ -175,13 +175,16 @@ app.post('/exotel/call', async (req, res) => {
     // Voice flow webhook URL (for greeting and recording)
     const voiceFlowUrl = `${baseUrl}/exotel/voice-flow`;
     
-    // Prepare request data
+    // Prepare request data for Exotel Connect API
+    // Note: For basic outbound calls, Exotel Connect API directly connects From to To
+    // Url parameter is optional - only needed if you want custom call handling
     const requestData = new URLSearchParams({
-      From: fromNumber,
-      To: callTo,
-      CallerId: callerIdNumber,
+      From: fromNumber, // Exotel number (caller)
+      To: callTo, // Destination number (where call should go)
+      CallerId: callerIdNumber, // Caller ID to display
       TimeLimit: req.body.timeLimit || '300', // Max call duration (5 minutes)
       StatusCallback: statusCallbackUrl, // Webhook URL for call status updates
+      StatusCallbackMethod: 'POST', // Ensure POST method for status callbacks
       Record: 'true', // Enable call recording
       RecordingStatusCallback: `${baseUrl}/exotel/recording-status`, // Recording status webhook
       RecordingStatusCallbackMethod: 'POST',
@@ -191,6 +194,16 @@ app.post('/exotel/call', async (req, res) => {
     if (EXOTEL_APP_ID || req.body.appId) {
       requestData.append('AppId', EXOTEL_APP_ID || req.body.appId);
     }
+    
+    // Optional: Add Url for custom call handling (greeting, etc.)
+    // If you want greeting, uncomment this:
+    // const callConnectUrl = `${baseUrl}/exotel/call-connect`;
+    // requestData.append('Url', callConnectUrl);
+    
+    console.log(`📋 Request Parameters:`);
+    console.log(`   From: ${fromNumber}`);
+    console.log(`   To: ${callTo}`);
+    console.log(`   CallerId: ${callerIdNumber}`);
     
     // Add voice flow URL if using Exotel Flow API
     // Note: For basic calls, you might need to configure this in Exotel dashboard
@@ -221,13 +234,34 @@ app.post('/exotel/call', async (req, res) => {
       },
     });
 
-    console.log('Exotel API Response:', response.data);
+    console.log('✅ Exotel API Response:', JSON.stringify(response.data, null, 2));
+    
+    // Check call status from response
+    const callStatus = response.data.Call?.Status || response.data.Status || 'unknown';
+    const callSid = response.data.Call?.Sid || response.data.CallSid;
+    
+    console.log(`📊 Call Status: ${callStatus}`);
+    console.log(`📞 Call SID: ${callSid}`);
+    
+    // Log important call details
+    if (response.data.Call) {
+      console.log(`   From: ${response.data.Call.From}`);
+      console.log(`   To: ${response.data.Call.To}`);
+      console.log(`   Direction: ${response.data.Call.Direction}`);
+      console.log(`   Status: ${response.data.Call.Status}`);
+    }
 
     res.status(200).json({
       success: true,
       message: 'Call initiated successfully',
-      callSid: response.data.Call?.Sid || response.data.CallSid,
+      callSid: callSid,
+      status: callStatus,
+      from: response.data.Call?.From || fromNumber,
+      to: response.data.Call?.To || callTo,
       data: response.data,
+      note: callStatus === 'queued' || callStatus === 'ringing' 
+        ? 'Call is being processed. Please wait for the call to connect.'
+        : 'Check your phone for the incoming call.'
     });
 
   } catch (error) {
@@ -260,18 +294,65 @@ app.post('/exotel/call', async (req, res) => {
 // Exotel webhook (POST) - receives callbacks from Exotel
 app.post('/exotel/incoming', async (req, res) => {
   try {
-    console.log("Incoming Call Data:", req.body);
+    console.log("📥 Exotel Status Callback received:");
+    console.log("   Full data:", JSON.stringify(req.body, null, 2));
 
-    const { From, To, CallSid, CallStatus } = req.body;
+    const { From, To, CallSid, CallStatus, CallDuration, Direction } = req.body;
 
     // Store call information
-    console.log(`Incoming call from ${From} to ${To} | Call SID: ${CallSid} | Status: ${CallStatus}`);
+    console.log(`📞 Call Status Update:`);
+    console.log(`   Call SID: ${CallSid}`);
+    console.log(`   From: ${From}`);
+    console.log(`   To: ${To}`);
+    console.log(`   Status: ${CallStatus}`);
+    console.log(`   Direction: ${Direction || 'N/A'}`);
+    console.log(`   Duration: ${CallDuration || '0'} seconds`);
+    
+    // Log important status changes
+    if (CallStatus === 'completed') {
+      console.log(`✅ Call completed successfully! Duration: ${CallDuration}s`);
+    } else if (CallStatus === 'failed' || CallStatus === 'busy' || CallStatus === 'no-answer') {
+      console.log(`❌ Call failed with status: ${CallStatus}`);
+    } else if (CallStatus === 'ringing' || CallStatus === 'in-progress') {
+      console.log(`📞 Call is ${CallStatus}...`);
+    }
 
     // Respond OK to Exotel
     res.status(200).send('Webhook received');
   } catch (error) {
-    console.error("Webhook error:", error);
+    console.error("❌ Webhook error:", error);
     res.status(500).send('Error handling webhook');
+  }
+});
+
+// Exotel Call Connect Webhook - Simple connection (no greeting, just connect)
+app.post('/exotel/call-connect', (req, res) => {
+  try {
+    const { From, To, CallSid, DialCallStatus } = req.body;
+    
+    console.log(`📞 Call connect webhook triggered for Call SID: ${CallSid}`);
+    console.log(`   From: ${From}, To: ${To}`);
+    console.log(`   Dial Status: ${DialCallStatus || 'N/A'}`);
+
+    // For Exotel Connect API, when Url is provided, it's called when the call is answered
+    // We just need to return a simple response that keeps the call connected
+    // The call is already connected to the destination number (To), we just need to handle it
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <!-- Play greeting if needed, or just keep call connected -->
+    <Say voice="alice" language="en-IN">Hello, this is a call from Exotel.</Say>
+    <!-- Keep call connected for conversation -->
+    <Pause length="300"/>
+    <Hangup/>
+</Response>`;
+
+    res.type('text/xml');
+    res.send(twiml);
+  } catch (error) {
+    console.error("❌ Call connect error:", error);
+    // Return minimal TwiML on error to avoid breaking the call
+    res.type('text/xml');
+    res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
   }
 });
 
