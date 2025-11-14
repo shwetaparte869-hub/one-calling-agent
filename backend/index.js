@@ -13,6 +13,9 @@ app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
+// Serve frontend static files (before other routes)
+app.use(express.static('frontend'));
+
 // Exotel configuration from environment variables (trim whitespace)
 // Note: EXOTEL_SID should be the API KEY (Username) from Exotel dashboard, not Account SID
 // EXOTEL_ACCOUNT_SID is the Account SID (e.g., troikaplus1) used in URL path
@@ -125,19 +128,32 @@ app.post('/exotel/call', async (req, res) => {
     const accountSid = EXOTEL_ACCOUNT_SID || 'troikaplus1';
     const exotelUrl = `https://${subdomain}.exotel.com/v1/Accounts/${accountSid}/Calls/connect.json`;
 
+    // Get greeting text if provided
+    const greetingText = req.body.greeting || 'Hello! This is an automated call from Exotel. How can I help you today?';
+    
+    // Voice flow webhook URL (for greeting and recording)
+    const voiceFlowUrl = `${baseUrl}/exotel/voice-flow`;
+    
     // Prepare request data
     const requestData = new URLSearchParams({
       From: fromNumber,
       To: callTo,
       CallerId: callerIdNumber,
-      TimeLimit: req.body.timeLimit || '30', // Optional: max call duration in seconds
+      TimeLimit: req.body.timeLimit || '300', // Max call duration (5 minutes)
       StatusCallback: statusCallbackUrl, // Webhook URL for call status updates
+      Record: 'true', // Enable call recording
+      RecordingStatusCallback: `${baseUrl}/exotel/recording-status`, // Recording status webhook
+      RecordingStatusCallbackMethod: 'POST',
     });
     
     // Add App ID if provided (optional, some Exotel accounts require it)
     if (EXOTEL_APP_ID || req.body.appId) {
       requestData.append('AppId', EXOTEL_APP_ID || req.body.appId);
     }
+    
+    // Add voice flow URL if using Exotel Flow API
+    // Note: For basic calls, you might need to configure this in Exotel dashboard
+    // requestData.append('Url', voiceFlowUrl);
 
     // Make API call to Exotel with Basic Auth
     // Use API KEY (Username) and API TOKEN (Password) for authentication
@@ -204,16 +220,117 @@ app.post('/exotel/incoming', async (req, res) => {
   try {
     console.log("Incoming Call Data:", req.body);
 
-    const { From, To, CallSid } = req.body;
+    const { From, To, CallSid, CallStatus } = req.body;
 
-    // You can store or trigger something here
-    console.log(`Incoming call from ${From} to ${To} | Call SID: ${CallSid}`);
+    // Store call information
+    console.log(`Incoming call from ${From} to ${To} | Call SID: ${CallSid} | Status: ${CallStatus}`);
 
     // Respond OK to Exotel
     res.status(200).send('Webhook received');
   } catch (error) {
     console.error("Webhook error:", error);
     res.status(500).send('Error handling webhook');
+  }
+});
+
+// Exotel Voice Flow Webhook - Returns TwiML for greeting and recording
+app.post('/exotel/voice-flow', (req, res) => {
+  try {
+    const { From, To, CallSid } = req.body;
+    const greetingText = req.body.greeting || 'Hello! This is an automated call from Exotel. How can I help you today?';
+    
+    console.log(`📞 Voice flow triggered for Call SID: ${CallSid}`);
+    console.log(`   From: ${From}, To: ${To}`);
+    console.log(`   Greeting: ${greetingText}`);
+
+    // Generate TwiML response for Exotel
+    // Exotel uses TwiML format for voice instructions
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <!-- Play greeting using TTS -->
+    <Say voice="alice" language="en-IN">${greetingText}</Say>
+    
+    <!-- Record the call -->
+    <Record 
+        action="${req.protocol}://${req.get('host')}/exotel/recording-callback"
+        method="POST"
+        maxLength="300"
+        finishOnKey="#"
+        recordingStatusCallback="${req.protocol}://${req.get('host')}/exotel/recording-status"
+        recordingStatusCallbackMethod="POST"
+        transcribe="true"
+        transcribeCallback="${req.protocol}://${req.get('host')}/exotel/transcription-callback"
+    />
+    
+    <!-- Thank you message after recording -->
+    <Say voice="alice" language="en-IN">Thank you for your message. Have a great day!</Say>
+    
+    <!-- Hangup -->
+    <Hangup/>
+</Response>`;
+
+    res.type('text/xml');
+    res.send(twiml);
+  } catch (error) {
+    console.error("Voice flow error:", error);
+    res.status(500).send('Error in voice flow');
+  }
+});
+
+// Recording callback - when recording is complete
+app.post('/exotel/recording-callback', (req, res) => {
+  try {
+    const { CallSid, RecordingUrl, RecordingDuration, RecordingSid } = req.body;
+    
+    console.log(`🎙️ Recording completed for Call SID: ${CallSid}`);
+    console.log(`   Recording URL: ${RecordingUrl}`);
+    console.log(`   Duration: ${RecordingDuration} seconds`);
+    console.log(`   Recording SID: ${RecordingSid}`);
+
+    // Store recording information (you can save to database here)
+    // For now, just log it
+
+    res.status(200).send('Recording callback received');
+  } catch (error) {
+    console.error("Recording callback error:", error);
+    res.status(500).send('Error handling recording callback');
+  }
+});
+
+// Recording status callback
+app.post('/exotel/recording-status', (req, res) => {
+  try {
+    const { CallSid, RecordingStatus, RecordingUrl } = req.body;
+    
+    console.log(`📊 Recording status update: ${RecordingStatus} for Call SID: ${CallSid}`);
+    if (RecordingUrl) {
+      console.log(`   Recording URL: ${RecordingUrl}`);
+    }
+
+    res.status(200).send('Recording status received');
+  } catch (error) {
+    console.error("Recording status error:", error);
+    res.status(500).send('Error handling recording status');
+  }
+});
+
+// Transcription callback
+app.post('/exotel/transcription-callback', (req, res) => {
+  try {
+    const { CallSid, TranscriptionText, TranscriptionStatus, TranscriptionUrl } = req.body;
+    
+    console.log(`📝 Transcription ${TranscriptionStatus} for Call SID: ${CallSid}`);
+    if (TranscriptionText) {
+      console.log(`   Text: ${TranscriptionText}`);
+    }
+    if (TranscriptionUrl) {
+      console.log(`   Transcription URL: ${TranscriptionUrl}`);
+    }
+
+    res.status(200).send('Transcription callback received');
+  } catch (error) {
+    console.error("Transcription callback error:", error);
+    res.status(500).send('Error handling transcription callback');
   }
 });
 

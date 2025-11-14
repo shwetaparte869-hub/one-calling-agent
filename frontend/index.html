@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exotel AI Calling Agent</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        input[type="text"],
+        input[type="tel"],
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+
+        .calls-list {
+            margin-top: 20px;
+        }
+
+        .call-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .call-item h3 {
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .call-item p {
+            color: #666;
+            margin: 5px 0;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .badge.success {
+            background: #28a745;
+            color: white;
+        }
+
+        .badge.in-progress {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .badge.failed {
+            background: #dc3545;
+            color: white;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📞 Exotel AI Calling Agent</h1>
+            <p>Send calls, play greetings, and record conversations</p>
+        </div>
+
+        <div class="grid">
+            <!-- Make Call Card -->
+            <div class="card">
+                <h2>Make a Call</h2>
+                <form id="callForm">
+                    <div class="form-group">
+                        <label for="toNumber">To Number (10 digits)</label>
+                        <input type="tel" id="toNumber" placeholder="9324606985" required pattern="[0-9]{10}">
+                    </div>
+                    <div class="form-group">
+                        <label for="greeting">Greeting Message (Optional)</label>
+                        <textarea id="greeting" rows="3" placeholder="Hello! This is an automated call from Exotel. How can I help you today?"></textarea>
+                    </div>
+                    <button type="submit" class="btn" id="callBtn">
+                        📞 Make Call
+                    </button>
+                </form>
+                <div id="callStatus" class="status"></div>
+            </div>
+
+            <!-- Call Status Card -->
+            <div class="card">
+                <h2>Recent Calls</h2>
+                <div id="callsList" class="calls-list">
+                    <p style="color: #999; text-align: center;">No calls yet. Make your first call!</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration Card -->
+        <div class="card">
+            <h2>⚙️ Configuration</h2>
+            <div class="form-group">
+                <label>API Endpoint</label>
+                <input type="text" value="https://one-calling-agent.onrender.com" readonly>
+            </div>
+            <div class="form-group">
+                <label>Exotel Number</label>
+                <input type="text" value="07948516111" readonly>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'https://one-calling-agent.onrender.com';
+        let calls = JSON.parse(localStorage.getItem('calls') || '[]');
+
+        // Display saved calls
+        function displayCalls() {
+            const callsList = document.getElementById('callsList');
+            if (calls.length === 0) {
+                callsList.innerHTML = '<p style="color: #999; text-align: center;">No calls yet. Make your first call!</p>';
+                return;
+            }
+
+            callsList.innerHTML = calls.slice(-5).reverse().map(call => `
+                <div class="call-item">
+                    <h3>
+                        To: ${call.to}
+                        <span class="badge ${call.status === 'success' ? 'success' : call.status === 'in-progress' ? 'in-progress' : 'failed'}">
+                            ${call.status}
+                        </span>
+                    </h3>
+                    <p><strong>Call SID:</strong> ${call.callSid || 'N/A'}</p>
+                    <p><strong>Time:</strong> ${new Date(call.timestamp).toLocaleString()}</p>
+                    ${call.greeting ? `<p><strong>Greeting:</strong> ${call.greeting}</p>` : ''}
+                </div>
+            `).join('');
+        }
+
+        // Make call
+        document.getElementById('callForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const toNumber = document.getElementById('toNumber').value;
+            const greeting = document.getElementById('greeting').value;
+            const callBtn = document.getElementById('callBtn');
+            const statusDiv = document.getElementById('callStatus');
+
+            callBtn.disabled = true;
+            callBtn.innerHTML = '📞 Calling... <span class="loading"></span>';
+            statusDiv.className = 'status info';
+            statusDiv.textContent = 'Initiating call...';
+            statusDiv.style.display = 'block';
+
+            try {
+                const response = await fetch(`${API_URL}/exotel/call`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        to: toNumber,
+                        greeting: greeting || undefined
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    statusDiv.className = 'status success';
+                    statusDiv.textContent = `✅ Call initiated successfully! Call SID: ${data.callSid}`;
+
+                    // Save call to history
+                    calls.push({
+                        to: toNumber,
+                        callSid: data.callSid,
+                        status: 'success',
+                        timestamp: new Date().toISOString(),
+                        greeting: greeting
+                    });
+                    localStorage.setItem('calls', JSON.stringify(calls));
+                    displayCalls();
+
+                    // Reset form
+                    document.getElementById('callForm').reset();
+                } else {
+                    statusDiv.className = 'status error';
+                    statusDiv.textContent = `❌ Error: ${data.error || 'Failed to initiate call'}`;
+                }
+            } catch (error) {
+                statusDiv.className = 'status error';
+                statusDiv.textContent = `❌ Network error: ${error.message}`;
+            } finally {
+                callBtn.disabled = false;
+                callBtn.innerHTML = '📞 Make Call';
+            }
+        });
+
+        // Initialize
+        displayCalls();
+    </script>
+</body>
+</html>
+
